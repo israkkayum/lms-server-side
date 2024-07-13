@@ -2,6 +2,7 @@ const express = require("express");
 const app = express();
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
+const fileUpload = require("express-fileupload");
 require("dotenv").config();
 
 const port = process.env.PORT || 65000;
@@ -9,6 +10,7 @@ const port = process.env.PORT || 65000;
 // middleware
 app.use(cors());
 app.use(express.json());
+app.use(fileUpload());
 
 const { MongoClient, ServerApiVersion } = require("mongodb");
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.4c1ex.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
@@ -70,6 +72,13 @@ async function run() {
       res.send(result);
     });
 
+    app.get("/users/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+      const query = { email: email };
+      const user = await userCollection.findOne(query);
+      res.json(user);
+    });
+
     app.get("/users/admin/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
 
@@ -96,6 +105,18 @@ async function run() {
       }
       const result = await userCollection.insertOne(user);
       res.send(result);
+    });
+
+    app.put("/users/profilePic", async (req, res) => {
+      const user = req.body;
+      const filter = { email: user.email };
+      const pic = req.files.profilePic;
+      const picData = pic.data;
+      const encodedPic = picData.toString("base64");
+      const imageBuffer = Buffer.from(encodedPic, "base64");
+      const updateDoc = { $set: { profilePic: imageBuffer } };
+      const result = await userCollection.updateOne(filter, updateDoc);
+      res.json(result);
     });
 
     //////////
