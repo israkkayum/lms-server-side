@@ -3,6 +3,7 @@ const app = express();
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const fileUpload = require("express-fileupload");
+const ObjectId = require("mongodb").ObjectId;
 require("dotenv").config();
 
 const port = process.env.PORT || 65000;
@@ -116,6 +117,31 @@ async function run() {
       const imageBuffer = Buffer.from(encodedPic, "base64");
       const updateDoc = { $set: { profilePic: imageBuffer } };
       const result = await userCollection.updateOne(filter, updateDoc);
+      res.json(result);
+    });
+
+    app.put("/users/profile-type", async (req, res) => {
+      const { email, profileType } = req.body;
+      const filter = { email: email };
+      const updateDoc = { $set: { profileType: profileType } };
+      const result = await userCollection.updateOne(filter, updateDoc);
+      res.json(result);
+    });
+
+    app.put("/users-info", async (req, res) => {
+      const user = req.body;
+      console.log(user);
+      const filter = { email: user.email };
+      const options = { upsert: true };
+      const updateDoc = { $set: user };
+      const result = await userCollection.updateOne(filter, updateDoc, options);
+      res.json(result);
+    });
+
+    app.delete("/users/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await userCollection.deleteOne(query);
       res.json(result);
     });
 
