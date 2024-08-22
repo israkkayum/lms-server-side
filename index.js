@@ -29,6 +29,7 @@ async function run() {
     await client.connect();
 
     const userCollection = client.db("lms").collection("users");
+    const siteCollection = client.db("lms").collection("sites");
 
     // jwt related api
     app.post("/jwt", async (req, res) => {
@@ -130,7 +131,6 @@ async function run() {
 
     app.put("/users-info", async (req, res) => {
       const user = req.body;
-      console.log(user);
       const filter = { email: user.email };
       const options = { upsert: true };
       const updateDoc = { $set: user };
@@ -143,6 +143,46 @@ async function run() {
       const query = { _id: new ObjectId(id) };
       const result = await userCollection.deleteOne(query);
       res.json(result);
+    });
+
+    // site collection
+    app.post("/sites", async (req, res) => {
+      const { createdBy, siteName, password, date } = req.body;
+
+      // Check if the site name already exists
+      const existingSite = await siteCollection.findOne({ siteName });
+      if (existingSite) {
+        return res.status(409).json({ message: "Site name already exists" });
+      }
+
+      // Save the new site information, including the password
+      const newSite = { createdBy, siteName, password, date };
+      const result = await siteCollection.insertOne(newSite);
+
+      if (result.insertedId) {
+        res.status(201).json({ insertedId: result.insertedId });
+      } else {
+        res.status(500).json({ message: "Failed to create the site" });
+      }
+    });
+
+    // Endpoint to check if siteName is available
+    app.get("/sites/check-site-name", async (req, res) => {
+      const { siteName } = req.query;
+
+      try {
+        const siteExists = await siteCollection.findOne({ siteName });
+
+        if (siteExists) {
+          res.status(409).json({ message: "Site name already exists." });
+        } else {
+          res.status(200).json({ message: "Site name is available." });
+        }
+      } catch (error) {
+        res
+          .status(500)
+          .json({ message: "An error occurred while checking the site name." });
+      }
     });
 
     //////////
