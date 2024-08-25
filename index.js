@@ -145,43 +145,88 @@ async function run() {
       res.json(result);
     });
 
-    // site collection
+    // POST endpoint to create a new site
     app.post("/sites", async (req, res) => {
       const { createdBy, siteName, password, date } = req.body;
 
-      // Check if the site name already exists
-      const existingSite = await siteCollection.findOne({ siteName });
-      if (existingSite) {
-        return res.status(409).json({ message: "Site name already exists" });
-      }
-
-      // Save the new site information, including the password
-      const newSite = { createdBy, siteName, password, date };
-      const result = await siteCollection.insertOne(newSite);
-
-      if (result.insertedId) {
-        res.status(201).json({ insertedId: result.insertedId });
-      } else {
-        res.status(500).json({ message: "Failed to create the site" });
-      }
-    });
-
-    // Endpoint to check if siteName is available
-    app.get("/sites/check-site-name", async (req, res) => {
-      const { siteName } = req.query;
-
       try {
-        const siteExists = await siteCollection.findOne({ siteName });
+        // Check if the site name already exists
+        const existingSite = await siteCollection.findOne({ siteName });
 
-        if (siteExists) {
-          res.status(409).json({ message: "Site name already exists." });
+        if (existingSite) {
+          return res.status(409).json({ message: "Site name already exists" });
+        }
+
+        // Save the new site information, including the password
+        const newSite = { createdBy, siteName, password, date };
+        const result = await siteCollection.insertOne(newSite);
+
+        if (result.insertedId) {
+          res.status(201).json({ insertedId: result.insertedId });
         } else {
-          res.status(200).json({ message: "Site name is available." });
+          res.status(500).json({ message: "Failed to create the site" });
         }
       } catch (error) {
         res
           .status(500)
-          .json({ message: "An error occurred while checking the site name." });
+          .json({ message: "An error occurred while creating the site." });
+      }
+    });
+
+    app.get("/sites/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+
+      try {
+        const sites = await siteCollection.find({ createdBy: email }).toArray();
+        res.status(200).json(sites);
+      } catch (error) {
+        res
+          .status(500)
+          .json({ message: "An error occurred while fetching sites", error });
+      }
+    });
+
+    app.post("/sites/join", async (req, res) => {
+      // const { email } = req.decoded; // Get the email from the decoded token
+      const { siteName, password, email } = req.body;
+
+      try {
+        // Find the site by name
+        const site = await siteCollection.findOne({ siteName });
+
+        // Check if the site exists
+        if (!site) {
+          return res.status(404).json({ message: "Site not found" });
+        }
+
+        // Verify the password
+        if (site.password !== password) {
+          return res.status(401).json({ message: "Incorrect password" });
+        }
+
+        // Check if the user is already a member of the site
+        const isAlreadyMember = site.members && site.members.includes(email);
+        if (isAlreadyMember) {
+          return res
+            .status(400)
+            .json({ message: "You are already a member of this site" });
+        }
+
+        // Update the site document to add the user to the members array
+        const updateResult = await siteCollection.updateOne(
+          { _id: site._id },
+          { $push: { members: email } }
+        );
+
+        if (updateResult.modifiedCount === 1) {
+          res.status(200).json({ message: "Successfully joined the site" });
+        } else {
+          res.status(500).json({ message: "Failed to join the site" });
+        }
+      } catch (error) {
+        res
+          .status(500)
+          .json({ message: "An error occurred while joining the site", error });
       }
     });
 
