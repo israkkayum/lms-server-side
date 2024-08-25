@@ -230,6 +230,31 @@ async function run() {
       }
     });
 
+    // Express route to get sites a user has joined
+    app.get("/sites/joined/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+
+      if (!email) {
+        return res
+          .status(400)
+          .json({ message: "Email is required to fetch joined sites." });
+      }
+
+      try {
+        // Find all sites where the user is a member
+        const joinedSites = await siteCollection
+          .find({ members: email })
+          .toArray();
+
+        res.status(200).json(joinedSites);
+      } catch (error) {
+        console.error("Error fetching joined sites:", error);
+        res
+          .status(500)
+          .json({ message: "An error occurred while fetching joined sites." });
+      }
+    });
+
     //////////
   } finally {
     // await client.close();
