@@ -278,6 +278,26 @@ async function run() {
 
     /////////////// CMS //////////////
 
+    app.get("/sites/:siteName/is-member", async (req, res) => {
+      const { siteName } = req.params;
+      const { email } = req.query; // Email is passed as a query parameter
+
+      try {
+        const site = await siteCollection.findOne({ siteName });
+
+        if (!site) {
+          return res.status(404).json({ message: "Site not found" });
+        }
+
+        // Check if the user is a member of the site
+        const isMember = site.members && site.members.includes(email);
+
+        res.status(200).json({ isMember });
+      } catch (error) {
+        res.status(500).json({ message: "An error occurred", error });
+      }
+    });
+
     //////////
   } finally {
     // await client.close();
