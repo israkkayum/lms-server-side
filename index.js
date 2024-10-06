@@ -186,6 +186,27 @@ async function run() {
       }
     });
 
+    // Endpoint to get site details by siteName
+    app.get("/sites/by-name/:siteName", verifyToken, async (req, res) => {
+      const { siteName } = req.params;
+
+      try {
+        // Fetch the site details based on the siteName
+        const site = await siteCollection.findOne({ siteName });
+
+        if (!site) {
+          return res.status(404).json({ message: "Site not found" });
+        }
+
+        // Send back the site details including the siteId
+        res.status(200).json({ siteId: site._id, ...site });
+      } catch (error) {
+        res
+          .status(500)
+          .json({ message: "An error occurred while fetching site details." });
+      }
+    });
+
     app.post("/sites/join", async (req, res) => {
       // const { email } = req.decoded; // Get the email from the decoded token
       const { siteName, password, email } = req.body;
@@ -254,6 +275,8 @@ async function run() {
           .json({ message: "An error occurred while fetching joined sites." });
       }
     });
+
+    /////////////// CMS //////////////
 
     //////////
   } finally {
