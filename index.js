@@ -22,6 +22,8 @@ const client = new MongoClient(uri, {
     strict: true,
     deprecationErrors: true,
   },
+  socketTimeoutMS: 30000, // 30 seconds
+  connectTimeoutMS: 30000, // 30 seconds
 });
 
 async function run() {
@@ -298,6 +300,27 @@ async function run() {
       }
     });
 
+    // Update Site Home Settings for a Specific Site
+    app.put("/sites/:id/home-settings", async (req, res) => {
+      const { fullSiteName, shortSiteName, siteSummary } = req.body;
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: {
+          fullSiteName,
+          shortSiteName,
+          siteSummary,
+        },
+      };
+      const options = { upsert: false };
+
+      const result = await siteCollection.updateOne(query, updateDoc, options);
+      if (result.matchedCount === 0) {
+        res.status(404).json({ error: "Site not found" });
+      } else {
+        res.json(result);
+      }
+    });
     //////////
   } finally {
     // await client.close();
