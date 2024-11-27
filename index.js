@@ -32,6 +32,7 @@ async function run() {
 
     const userCollection = client.db("lms").collection("users");
     const siteCollection = client.db("lms").collection("sites");
+    const courseCollection = client.db("lms").collection("courses");
 
     // jwt related api
     app.post("/jwt", async (req, res) => {
@@ -321,6 +322,31 @@ async function run() {
         res.json(result);
       }
     });
+
+    // Add a new course
+    app.post("/courses", async (req, res) => {
+      const courseData = req.body;
+
+      // Handle thumbnail
+      const pic = req.files?.thumbnail;
+      if (!pic) {
+        return res.status(400).json({ error: "Thumbnail is required" });
+      }
+
+      const picData = pic.data;
+      const encodedPic = picData.toString("base64");
+      const imageBuffer = Buffer.from(encodedPic, "base64");
+
+      // Prepare course object
+      const newCourse = {
+        ...courseData,
+        thumbnail: imageBuffer,
+      };
+
+      const result = await courseCollection.insertOne(newCourse);
+      res.json(result);
+    });
+
     //////////
   } finally {
     // await client.close();
