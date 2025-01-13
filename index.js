@@ -372,30 +372,213 @@ async function run() {
       }
     });
 
-    app.get("/course/:courseId", verifyToken, async (req, res) => {
+    // Get course by ID
+    app.get("/course/:courseId", async (req, res) => {
       const { courseId } = req.params;
 
       try {
-        // Fetch the course details based on the courseId
         const course = await courseCollection.findOne({
           _id: new ObjectId(courseId),
         });
 
         if (!course) {
-          // Return 404 if the course is not found
           return res.status(404).json({ message: "Course not found" });
         }
 
-        // Send back the course details
         res.status(200).json(course);
       } catch (error) {
         console.error("Error fetching course details:", error);
-        // Return 500 if there's a server error
-        res.status(500).json({
-          message: "An error occurred while fetching course details.",
-        });
+        res.status(500).json({ message: "An error occurred." });
       }
     });
+
+    // Add a Section
+    app.post("/course/:courseId/section", async (req, res) => {
+      const { courseId } = req.params;
+      const { title } = req.body;
+      const sectionId = Date.now().toString();
+
+      try {
+        const updateResult = await courseCollection.updateOne(
+          { _id: new ObjectId(courseId) },
+          { $push: { sections: { sectionId, title, lessons: [] } } }
+        );
+
+        if (updateResult.modifiedCount === 0) {
+          return res.status(404).json({ message: "Course not found" });
+        }
+
+        res.status(201).json({ message: "Section added successfully" });
+      } catch (error) {
+        console.error("Error adding section:", error);
+        res.status(500).json({ message: "An error occurred." });
+      }
+    });
+
+    // Rename Section
+    app.put("/course/:courseId/section/:sectionId", async (req, res) => {
+      const { courseId, sectionId } = req.params;
+      const { newTitle } = req.body;
+
+      try {
+        const course = await courseCollection.findOne({
+          _id: new ObjectId(courseId),
+        });
+
+        if (!course) {
+          return res.status(404).json({ message: "Course not found" });
+        }
+
+        const sectionIndex = course.sections.findIndex(
+          (section) => section.sectionId.toString() === sectionId
+        );
+
+        if (sectionIndex === -1) {
+          return res.status(404).json({ message: "Section not found" });
+        }
+
+        course.sections[sectionIndex].title = newTitle;
+
+        await courseCollection.updateOne(
+          { _id: new ObjectId(courseId) },
+          { $set: { sections: course.sections } }
+        );
+
+        res.status(200).json({ message: "Section renamed successfully" });
+      } catch (error) {
+        console.error("Error renaming section:", error);
+        res.status(500).json({ message: "Error renaming section" });
+      }
+    });
+
+    // Delete a Section
+    app.delete("/course/:courseId/section/:sectionId", async (req, res) => {
+      const { courseId, sectionId } = req.params;
+
+      try {
+        const updateResult = await courseCollection.updateOne(
+          { _id: new ObjectId(courseId) },
+          { $pull: { sections: { sectionId: sectionId } } }
+        );
+
+        if (updateResult.modifiedCount === 0) {
+          return res.status(404).json({ message: "Section not found" });
+        }
+
+        res.status(200).json({ message: "Section deleted successfully" });
+      } catch (error) {
+        console.error("Error deleting section:", error);
+        res.status(500).json({ message: "An error occurred." });
+      }
+    });
+
+    // Add a Lesson
+    app.post(
+      "/course/:courseId/section/:sectionId/lesson",
+      async (req, res) => {
+        const { courseId, sectionId } = req.params;
+        const { lessonName } = req.body;
+
+        const lessonId = Date.now().toString();
+
+        try {
+          const updateResult = await courseCollection.updateOne(
+            {
+              _id: new ObjectId(courseId),
+              "sections.sectionId": sectionId,
+            },
+            {
+              $push: {
+                "sections.$.lessons": {
+                  lessonId,
+                  name: lessonName,
+                  options: {},
+                },
+              },
+            }
+          );
+
+          if (updateResult.modifiedCount === 0) {
+            return res.status(404).json({ message: "Section not found" });
+          }
+
+          res.status(201).json({ message: "Lesson added successfully" });
+        } catch (error) {
+          console.error("Error adding lesson:", error);
+          res.status(500).json({ message: "An error occurred." });
+        }
+      }
+    );
+
+    // Rename a Lesson
+    app.put(
+      "/course/:courseId/section/:sectionId/lesson/:lessonId",
+      async (req, res) => {
+        const { courseId, sectionId, lessonId } = req.params;
+        const { newName } = req.body;
+
+        try {
+          const updateResult = await courseCollection.updateOne(
+            {
+              _id: new ObjectId(courseId),
+            },
+            {
+              $set: {
+                "sections.$[section].lessons.$[lesson].name": newName,
+              },
+            },
+            {
+              arrayFilters: [
+                { "section.sectionId": sectionId },
+                { "lesson.lessonId": lessonId },
+              ],
+            }
+          );
+
+          if (updateResult.modifiedCount === 0) {
+            return res.status(404).json({ message: "Lesson not found" });
+          }
+
+          res.status(200).json({ message: "Lesson renamed successfully" });
+        } catch (error) {
+          console.error("Error renaming lesson:", error);
+          res.status(500).json({ message: "An error occurred." });
+        }
+      }
+    );
+
+    // Delete a Lesson
+    app.delete(
+      "/course/:courseId/section/:sectionId/lesson/:lessonId",
+      async (req, res) => {
+        const { courseId, sectionId, lessonId } = req.params;
+
+        try {
+          const updateResult = await courseCollection.updateOne(
+            {
+              _id: new ObjectId(courseId),
+            },
+            {
+              $pull: {
+                "sections.$[section].lessons": { lessonId: lessonId },
+              },
+            },
+            {
+              arrayFilters: [{ "section.sectionId": sectionId }],
+            }
+          );
+
+          if (updateResult.modifiedCount === 0) {
+            return res.status(404).json({ message: "Lesson not found" });
+          }
+
+          res.status(200).json({ message: "Lesson deleted successfully" });
+        } catch (error) {
+          console.error("Error deleting lesson:", error);
+          res.status(500).json({ message: "An error occurred." });
+        }
+      }
+    );
 
     //////////
   } finally {
