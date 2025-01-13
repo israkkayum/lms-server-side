@@ -72,7 +72,7 @@ async function run() {
     };
 
     // users related api
-    app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
+    app.get("/users", verifyToken, async (req, res) => {
       const result = await userCollection.find().toArray();
       res.send(result);
     });
@@ -345,6 +345,56 @@ async function run() {
 
       const result = await courseCollection.insertOne(newCourse);
       res.json(result);
+    });
+
+    app.get("/courses/:originId", verifyToken, async (req, res) => {
+      const { originId } = req.params;
+
+      try {
+        // Query the database to find courses with the given originId
+        const courses = await courseCollection
+          .find({ origin: originId })
+          .toArray();
+
+        if (courses.length === 0) {
+          return res
+            .status(404)
+            .json({ message: "No courses found for this originId" });
+        }
+
+        // Respond with the list of courses
+        res.status(200).json(courses);
+      } catch (error) {
+        console.error("Error fetching courses:", error);
+        res
+          .status(500)
+          .json({ message: "An error occurred while fetching courses", error });
+      }
+    });
+
+    app.get("/course/:courseId", verifyToken, async (req, res) => {
+      const { courseId } = req.params;
+
+      try {
+        // Fetch the course details based on the courseId
+        const course = await courseCollection.findOne({
+          _id: new ObjectId(courseId),
+        });
+
+        if (!course) {
+          // Return 404 if the course is not found
+          return res.status(404).json({ message: "Course not found" });
+        }
+
+        // Send back the course details
+        res.status(200).json(course);
+      } catch (error) {
+        console.error("Error fetching course details:", error);
+        // Return 500 if there's a server error
+        res.status(500).json({
+          message: "An error occurred while fetching course details.",
+        });
+      }
     });
 
     //////////
