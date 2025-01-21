@@ -401,7 +401,7 @@ async function run() {
       try {
         const updateResult = await courseCollection.updateOne(
           { _id: new ObjectId(courseId) },
-          { $push: { sections: { sectionId, title, lessons: [] } } }
+          { $push: { sections: { courseId, sectionId, title, lessons: [] } } }
         );
 
         if (updateResult.modifiedCount === 0) {
@@ -490,9 +490,10 @@ async function run() {
             {
               $push: {
                 "sections.$.lessons": {
+                  courseId,
+                  sectionId,
                   lessonId,
                   name: lessonName,
-                  options: {},
                 },
               },
             }
@@ -573,6 +574,100 @@ async function run() {
           }
 
           res.status(200).json({ message: "Lesson deleted successfully" });
+        } catch (error) {
+          console.error("Error deleting lesson:", error);
+          res.status(500).json({ message: "An error occurred." });
+        }
+      }
+    );
+
+    // video upload
+    app.post(
+      "/course/:courseId/section/:sectionId/lesson/:lessonId/video",
+      async (req, res) => {
+        const { courseId, sectionId, lessonId } = req.params;
+        const { type, title } = req.body;
+        const videoFile = req.files?.file;
+
+        if (!videoFile) {
+          return res.status(400).json({ error: "Video file is required" });
+        }
+
+        if (!videoFile.mimetype.startsWith("video/")) {
+          return res.status(400).json({ error: "File must be a video" });
+        }
+
+        // Use the video file's data directly
+        const videoBuffer = videoFile.data;
+
+        try {
+          const updateResult = await courseCollection.updateOne(
+            {
+              _id: new ObjectId(courseId),
+            },
+            {
+              // $set: {
+              //   "sections.$[section].lessons.$[lesson].type": type, // Add or update `type`
+              //   "sections.$[section].lessons.$[lesson].title": title, // Add or update `title`
+              //   "sections.$[section].lessons.$[lesson].data": videoBuffer, // Add or update `data`
+              // },
+              $set: {
+                "sections.$[section].lessons.$[lesson].content": {
+                  type,
+                  title,
+                  data: videoBuffer,
+                },
+              },
+            },
+            {
+              arrayFilters: [
+                { "section.sectionId": sectionId },
+                { "lesson.lessonId": lessonId },
+              ],
+            }
+          );
+
+          if (updateResult.modifiedCount === 0) {
+            return res.status(404).json({ message: "Lesson not found" });
+          }
+
+          res.status(200).json({ message: "Video uploaded successfully" });
+        } catch (error) {
+          console.error("Error uploading video:", error);
+          res.status(500).json({ message: "An error occurred." });
+        }
+      }
+    );
+
+    // Delete lesson content
+    app.delete(
+      "/course/:courseId/section/:sectionId/lesson/:lessonId/content",
+      async (req, res) => {
+        const { courseId, sectionId, lessonId } = req.params;
+
+        console.log(req.params);
+
+        try {
+          const updateResult = await courseCollection.updateOne(
+            { _id: new ObjectId(courseId) },
+            {
+              $unset: {
+                "sections.$[section].lessons.$[lesson].content": "",
+              },
+            },
+            {
+              arrayFilters: [
+                { "section.sectionId": sectionId },
+                { "lesson.lessonId": lessonId },
+              ],
+            }
+          );
+
+          if (updateResult.modifiedCount === 0) {
+            return res.status(404).json({ message: "Lesson not found" });
+          }
+
+          res.status(200).json({ message: "Lesson deleted successfully!" });
         } catch (error) {
           console.error("Error deleting lesson:", error);
           res.status(500).json({ message: "An error occurred." });
