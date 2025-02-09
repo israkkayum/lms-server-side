@@ -645,8 +645,6 @@ async function run() {
       async (req, res) => {
         const { courseId, sectionId, lessonId } = req.params;
 
-        console.log(req.params);
-
         try {
           const updateResult = await courseCollection.updateOne(
             { _id: new ObjectId(courseId) },
@@ -670,6 +668,44 @@ async function run() {
           res.status(200).json({ message: "Lesson deleted successfully!" });
         } catch (error) {
           console.error("Error deleting lesson:", error);
+          res.status(500).json({ message: "An error occurred." });
+        }
+      }
+    );
+
+    app.patch(
+      "/course/:courseId/section/:sectionId/lesson/:lessonId/content",
+      async (req, res) => {
+        const { courseId, sectionId, lessonId } = req.params;
+        const { title } = req.body;
+
+        if (!title) {
+          return res.status(400).json({ error: "Title is required." });
+        }
+
+        try {
+          const updateResult = await courseCollection.updateOne(
+            { _id: new ObjectId(courseId) },
+            {
+              $set: {
+                "sections.$[section].lessons.$[lesson].content.title": title,
+              },
+            },
+            {
+              arrayFilters: [
+                { "section.sectionId": sectionId },
+                { "lesson.lessonId": lessonId },
+              ],
+            }
+          );
+
+          if (updateResult.modifiedCount === 0) {
+            return res.status(404).json({ message: "Lesson not found." });
+          }
+
+          res.status(200).json({ message: "Title updated successfully." });
+        } catch (error) {
+          console.error("Error updating title:", error);
           res.status(500).json({ message: "An error occurred." });
         }
       }
