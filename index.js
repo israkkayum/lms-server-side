@@ -581,7 +581,7 @@ async function run() {
       }
     );
 
-    // video upload
+    // video upload endpoint
     app.post(
       "/course/:courseId/section/:sectionId/lesson/:lessonId/video",
       async (req, res) => {
@@ -639,6 +639,306 @@ async function run() {
       }
     );
 
+    // assignment upload
+    app.post(
+      "/course/:courseId/section/:sectionId/lesson/:lessonId/assignment",
+      async (req, res) => {
+        const { courseId, sectionId, lessonId } = req.params;
+        const { type, title, description } = req.body;
+
+        if (!title) {
+          return res.status(400).json({ error: "Title is required." });
+        }
+
+        try {
+          const updateResult = await courseCollection.updateOne(
+            { _id: new ObjectId(courseId) },
+            {
+              $set: {
+                "sections.$[section].lessons.$[lesson].content": {
+                  type,
+                  title,
+                  description,
+                },
+              },
+            },
+            {
+              arrayFilters: [
+                { "section.sectionId": sectionId },
+                { "lesson.lessonId": lessonId },
+              ],
+            }
+          );
+
+          if (updateResult.modifiedCount === 0) {
+            return res.status(404).json({ message: "Lesson not found." });
+          }
+
+          res.status(200).json({ message: "Assignment updated successfully." });
+        } catch (error) {
+          console.error("Error updating assignment:", error);
+          res.status(500).json({ message: "An error occurred." });
+        }
+      }
+    );
+
+    // article upload endpoint
+    app.post(
+      "/course/:courseId/section/:sectionId/lesson/:lessonId/article",
+      async (req, res) => {
+        const { courseId, sectionId, lessonId } = req.params;
+        const { type, title, content } = req.body;
+
+        if (!title) {
+          return res.status(400).json({ error: "Title is required." });
+        }
+
+        try {
+          const updateResult = await courseCollection.updateOne(
+            { _id: new ObjectId(courseId) },
+            {
+              $set: {
+                "sections.$[section].lessons.$[lesson].content": {
+                  type,
+                  title,
+                  content,
+                },
+              },
+            },
+            {
+              arrayFilters: [
+                { "section.sectionId": sectionId },
+                { "lesson.lessonId": lessonId },
+              ],
+            }
+          );
+
+          if (updateResult.modifiedCount === 0) {
+            return res.status(404).json({ message: "Lesson not found." });
+          }
+
+          res.status(200).json({ message: "Assignment updated successfully." });
+        } catch (error) {
+          console.error("Error updating assignment:", error);
+          res.status(500).json({ message: "An error occurred." });
+        }
+      }
+    );
+
+    // Resources upload endpoint
+    app.post(
+      "/course/:courseId/section/:sectionId/lesson/:lessonId/resources",
+      async (req, res) => {
+        const { courseId, sectionId, lessonId } = req.params;
+        const { title, type } = req.body;
+
+        if (!req.files || !req.files.files) {
+          return res.status(400).json({ message: "No files were uploaded" });
+        }
+
+        // Handle both single file and multiple files
+        const uploadedFiles = Array.isArray(req.files.files)
+          ? req.files.files
+          : [req.files.files];
+
+        try {
+          // Process each file
+          const resources = uploadedFiles.map((file) => ({
+            filename: file.name,
+            filesize: file.size,
+            mimetype: file.mimetype,
+            data: file.data,
+          }));
+
+          // Update the lesson with resources
+          const updateResult = await courseCollection.updateOne(
+            { _id: new ObjectId(courseId) },
+            {
+              $set: {
+                "sections.$[section].lessons.$[lesson].content": {
+                  title,
+                  type,
+                  files: resources,
+                  uploadedAt: new Date(),
+                },
+              },
+            },
+            {
+              arrayFilters: [
+                { "section.sectionId": sectionId },
+                { "lesson.lessonId": lessonId },
+              ],
+            }
+          );
+
+          if (updateResult.modifiedCount === 0) {
+            return res.status(404).json({ message: "Lesson not found" });
+          }
+
+          res.status(200).json({
+            message: "Resources uploaded successfully!",
+            filesCount: resources.length,
+          });
+        } catch (error) {
+          console.error("Error uploading resources:", error);
+          res
+            .status(500)
+            .json({ message: "An error occurred while uploading resources" });
+        }
+      }
+    );
+
+    // Quiz upload endpoint
+    app.post(
+      "/course/:courseId/section/:sectionId/lesson/:lessonId/quiz",
+      async (req, res) => {
+        const { courseId, sectionId, lessonId } = req.params;
+        const { title, type, questions } = req.body;
+
+        if (!title) {
+          return res.status(400).json({ error: "Quiz title is required." });
+        }
+
+        if (!questions || !Array.isArray(questions) || questions.length === 0) {
+          return res
+            .status(400)
+            .json({ error: "At least one question is required." });
+        }
+
+        try {
+          const updateResult = await courseCollection.updateOne(
+            { _id: new ObjectId(courseId) },
+            {
+              $set: {
+                "sections.$[section].lessons.$[lesson].content": {
+                  type,
+                  title,
+                  questions,
+                  createdAt: new Date(),
+                },
+              },
+            },
+            {
+              arrayFilters: [
+                { "section.sectionId": sectionId },
+                { "lesson.lessonId": lessonId },
+              ],
+            }
+          );
+
+          if (updateResult.modifiedCount === 0) {
+            return res.status(404).json({ message: "Lesson not found." });
+          }
+
+          res.status(200).json({ message: "Quiz uploaded successfully!" });
+        } catch (error) {
+          console.error("Error uploading quiz:", error);
+          res
+            .status(500)
+            .json({ message: "An error occurred while uploading the quiz." });
+        }
+      }
+    );
+
+    // update lesson contents
+    app.patch(
+      "/course/:courseId/section/:sectionId/lesson/:lessonId/content",
+      async (req, res) => {
+        const { courseId, sectionId, lessonId } = req.params;
+        const { title, type, questions, description, content, existingFiles } =
+          req.body;
+        let updateFields = {};
+
+        if (!title) {
+          return res.status(400).json({ error: "Title is required." });
+        }
+
+        // Create a content object that we'll build based on the type and provided data
+        let contentObject = { title, type };
+
+        // Add fields based on content type
+        if (description !== undefined) {
+          contentObject.description = description;
+        }
+
+        if (content !== undefined) {
+          contentObject.content = content;
+        }
+
+        if (type === "quiz") {
+          if (
+            !questions ||
+            !Array.isArray(questions) ||
+            questions.length === 0
+          ) {
+            return res
+              .status(400)
+              .json({ error: "At least one question is required." });
+          }
+          contentObject.questions = questions;
+          contentObject.updatedAt = new Date();
+        }
+
+        // Handle resource files
+        let parsedExistingFiles = [];
+        try {
+          parsedExistingFiles = existingFiles ? JSON.parse(existingFiles) : [];
+        } catch (error) {
+          console.error("Error parsing existing files:", error);
+        }
+
+        let newResources = [];
+        if (req.files && req.files.files) {
+          const uploadedFiles = Array.isArray(req.files.files)
+            ? req.files.files
+            : [req.files.files];
+
+          newResources = uploadedFiles.map((file) => ({
+            filename: file.name,
+            filesize: file.size,
+            mimetype: file.mimetype,
+            data: file.data,
+          }));
+        }
+
+        const allResources = [...parsedExistingFiles, ...newResources];
+        if (allResources.length > 0) {
+          contentObject.files = allResources;
+        }
+
+        // Set the entire content object at once
+        updateFields["sections.$[section].lessons.$[lesson].content"] =
+          contentObject;
+
+        try {
+          const updateResult = await courseCollection.updateOne(
+            { _id: new ObjectId(courseId) },
+            { $set: updateFields },
+            {
+              arrayFilters: [
+                { "section.sectionId": sectionId },
+                { "lesson.lessonId": lessonId },
+              ],
+            }
+          );
+
+          if (updateResult.matchedCount === 0) {
+            return res.status(404).json({ message: "Lesson not found." });
+          }
+
+          res.status(200).json({
+            message: "Content updated successfully!",
+            filesCount: allResources.length,
+          });
+        } catch (error) {
+          console.error("Error updating content:", error);
+          res
+            .status(500)
+            .json({ message: "An error occurred while updating content." });
+        }
+      }
+    );
+
     // Delete lesson content
     app.delete(
       "/course/:courseId/section/:sectionId/lesson/:lessonId/content",
@@ -668,44 +968,6 @@ async function run() {
           res.status(200).json({ message: "Lesson deleted successfully!" });
         } catch (error) {
           console.error("Error deleting lesson:", error);
-          res.status(500).json({ message: "An error occurred." });
-        }
-      }
-    );
-
-    app.patch(
-      "/course/:courseId/section/:sectionId/lesson/:lessonId/content",
-      async (req, res) => {
-        const { courseId, sectionId, lessonId } = req.params;
-        const { title } = req.body;
-
-        if (!title) {
-          return res.status(400).json({ error: "Title is required." });
-        }
-
-        try {
-          const updateResult = await courseCollection.updateOne(
-            { _id: new ObjectId(courseId) },
-            {
-              $set: {
-                "sections.$[section].lessons.$[lesson].content.title": title,
-              },
-            },
-            {
-              arrayFilters: [
-                { "section.sectionId": sectionId },
-                { "lesson.lessonId": lessonId },
-              ],
-            }
-          );
-
-          if (updateResult.modifiedCount === 0) {
-            return res.status(404).json({ message: "Lesson not found." });
-          }
-
-          res.status(200).json({ message: "Title updated successfully." });
-        } catch (error) {
-          console.error("Error updating title:", error);
           res.status(500).json({ message: "An error occurred." });
         }
       }
