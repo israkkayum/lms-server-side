@@ -392,6 +392,48 @@ async function run() {
       }
     });
 
+    // Update course settings
+    app.put("/courses/:id", async (req, res) => {
+      const courseId = req.params.id;
+      const { courseName, courseDescription, courseCategory, courseTags } =
+        req.body;
+
+      try {
+        const query = { _id: new ObjectId(courseId) };
+        const updateDoc = {
+          $set: {
+            courseName,
+            courseDescription,
+            courseCategory,
+            courseTags,
+            updatedAt: new Date(),
+          },
+        };
+
+        // Handle thumbnail if uploaded
+        if (req.files?.thumbnail) {
+          const pic = req.files.thumbnail;
+          const picData = pic.data;
+          const encodedPic = picData.toString("base64");
+          const imageBuffer = Buffer.from(encodedPic, "base64");
+          updateDoc.$set.thumbnail = imageBuffer;
+        }
+
+        const result = await courseCollection.updateOne(query, updateDoc);
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ error: "Course not found" });
+        }
+
+        res.json({ acknowledged: true });
+      } catch (error) {
+        console.error("Error updating course:", error);
+        res
+          .status(500)
+          .json({ error: "An error occurred while updating the course" });
+      }
+    });
+
     // Add a Section
     app.post("/course/:courseId/section", async (req, res) => {
       const { courseId } = req.params;
@@ -972,6 +1014,27 @@ async function run() {
         }
       }
     );
+
+    // Delete course by ID
+    app.delete("/courses/:id", async (req, res) => {
+      const courseId = req.params.id;
+
+      try {
+        const query = { _id: new ObjectId(courseId) };
+        const result = await courseCollection.deleteOne(query);
+
+        if (result.deletedCount === 1) {
+          res.json({ acknowledged: true });
+        } else {
+          res.status(404).json({ error: "Course not found" });
+        }
+      } catch (error) {
+        console.error("Error deleting course:", error);
+        res
+          .status(500)
+          .json({ error: "An error occurred while deleting the course" });
+      }
+    });
 
     //////////
   } finally {
