@@ -33,6 +33,15 @@ async function run() {
     const userCollection = client.db("lms").collection("users");
     const siteCollection = client.db("lms").collection("sites");
     const courseCollection = client.db("lms").collection("courses");
+    const progressCollection = client.db("lms").collection("courseProgress");
+    const assignmentSubmissionCollection = client
+      .db("lms")
+      .collection("assignmentSubmissions");
+
+    // Quiz submissions collection
+    const quizSubmissionCollection = client
+      .db("lms")
+      .collection("quizSubmissions");
 
     // jwt related api
     app.post("/jwt", async (req, res) => {
@@ -147,6 +156,116 @@ async function run() {
       const result = await userCollection.deleteOne(query);
       res.json(result);
     });
+
+    // Assignment submission endpoint
+    app.post("/assignments/submit", async (req, res) => {
+      try {
+        if (!req.files || !req.files.file) {
+          return res.status(400).json({ message: "No file uploaded" });
+        }
+
+        const { assignmentId, courseId, sectionId, lessonId, email } = req.body;
+        const file = req.files.file;
+        const studentEmail = email;
+
+        // Validate file size (10MB limit)
+        if (file.size > 10 * 1024 * 1024) {
+          return res
+            .status(400)
+            .json({ message: "File size must be less than 10MB" });
+        }
+
+        // Validate file type
+        const allowedTypes = [".pdf", ".doc", ".docx", ".zip"];
+        const fileExtension = file.name
+          .substring(file.name.lastIndexOf("."))
+          .toLowerCase();
+        if (!allowedTypes.includes(fileExtension)) {
+          return res.status(400).json({ message: "Invalid file type" });
+        }
+
+        // Convert file to base64
+        const fileData = file.data;
+        const encodedFile = fileData.toString("base64");
+        const fileBuffer = Buffer.from(encodedFile, "base64");
+
+        // Create submission document
+        const submission = {
+          assignmentId,
+          courseId,
+          sectionId,
+          lessonId,
+          studentEmail,
+          fileName: file.name,
+          fileType: fileExtension,
+          fileSize: file.size,
+          fileData: fileBuffer,
+          submittedAt: new Date(),
+        };
+
+        const result = await assignmentSubmissionCollection.insertOne(
+          submission
+        );
+
+        if (result.insertedId) {
+          res
+            .status(201)
+            .json({ message: "Assignment submitted successfully" });
+        } else {
+          res.status(500).json({ message: "Failed to submit assignment" });
+        }
+      } catch (error) {
+        console.error("Assignment submission error:", error);
+        res.status(500).json({ message: "Error submitting assignment" });
+      }
+    });
+
+    // Get assignment submissions for a specific assignment
+    app.get(
+      "/assignments/:assignmentId/submissions",
+      verifyToken,
+      async (req, res) => {
+        try {
+          const { assignmentId } = req.params;
+          const submissions = await assignmentSubmissionCollection
+            .find({ assignmentId })
+            .project({ fileData: 0 }) // Exclude file data from response
+            .toArray();
+
+          res.status(200).json(submissions);
+        } catch (error) {
+          console.error("Error fetching submissions:", error);
+          res.status(500).json({ message: "Error fetching submissions" });
+        }
+      }
+    );
+
+    // Get submission by assignment ID and user email
+    app.get(
+      "/assignments/:assignmentId/submission/:email",
+      async (req, res) => {
+        try {
+          const { assignmentId, email } = req.params;
+
+          const submission = await assignmentSubmissionCollection.findOne({
+            assignmentId,
+            studentEmail: email,
+          });
+
+          if (!submission) {
+            return res.status(404).json({ message: "No submission found" });
+          }
+
+          // Exclude the file data from the response for better performance
+          const { fileData, ...submissionWithoutFile } = submission;
+
+          res.status(200).json(submissionWithoutFile);
+        } catch (error) {
+          console.error("Error fetching submission:", error);
+          res.status(500).json({ message: "Error fetching submission" });
+        }
+      }
+    );
 
     // POST endpoint to create a new site
     app.post("/sites", async (req, res) => {
@@ -686,7 +805,7 @@ async function run() {
       "/course/:courseId/section/:sectionId/lesson/:lessonId/assignment",
       async (req, res) => {
         const { courseId, sectionId, lessonId } = req.params;
-        const { type, title, description } = req.body;
+        const { type, title, description, id } = req.body;
 
         if (!title) {
           return res.status(400).json({ error: "Title is required." });
@@ -701,6 +820,7 @@ async function run() {
                   type,
                   title,
                   description,
+                  id,
                 },
               },
             },
@@ -763,6 +883,87 @@ async function run() {
         } catch (error) {
           console.error("Error updating assignment:", error);
           res.status(500).json({ message: "An error occurred." });
+        }
+      }
+    );
+
+    // Course Progress API Endpoints
+    app.get(
+      "/course-progress/:courseId/:email",
+      verifyToken,
+      async (req, res) => {
+        const { courseId, email } = req.params;
+
+        try {
+          const progress = await progressCollection.findOne({
+            courseId,
+            userEmail: email,
+          });
+
+          if (!progress) {
+            return res.json({
+              completedLessons: [],
+              progress: 0,
+            });
+          }
+
+          res.json(progress);
+        } catch (error) {
+          console.error("Error fetching course progress:", error);
+          res.status(500).json({ message: "Error fetching course progress" });
+        }
+      }
+    );
+
+    app.post(
+      "/course-progress/:courseId/:email",
+      verifyToken,
+      async (req, res) => {
+        const { courseId, email } = req.params;
+        const { lessonId, completed, timestamp } = req.body;
+
+        try {
+          const updateOperation = completed
+            ? { $addToSet: { completedLessons: lessonId } }
+            : { $pull: { completedLessons: lessonId } };
+
+          const result = await progressCollection.updateOne(
+            { courseId, userEmail: email },
+            {
+              ...updateOperation,
+              $set: { lastUpdated: timestamp },
+              $setOnInsert: { startedAt: timestamp },
+            },
+            { upsert: true }
+          );
+
+          // Calculate and update progress percentage
+          const course = await courseCollection.findOne({
+            _id: new ObjectId(courseId),
+          });
+
+          const totalLessons = course.sections.reduce(
+            (total, section) => total + section.lessons.length,
+            0
+          );
+
+          const progress = await progressCollection.findOne({
+            courseId,
+            userEmail: email,
+          });
+
+          const progressPercentage =
+            (progress.completedLessons.length / totalLessons) * 100;
+
+          await progressCollection.updateOne(
+            { courseId, userEmail: email },
+            { $set: { progress: progressPercentage } }
+          );
+
+          res.json({ success: true, progress: progressPercentage });
+        } catch (error) {
+          console.error("Error updating course progress:", error);
+          res.status(500).json({ message: "Error updating course progress" });
         }
       }
     );
@@ -835,7 +1036,7 @@ async function run() {
       "/course/:courseId/section/:sectionId/lesson/:lessonId/quiz",
       async (req, res) => {
         const { courseId, sectionId, lessonId } = req.params;
-        const { title, type, questions } = req.body;
+        const { title, type, questions, id } = req.body;
 
         if (!title) {
           return res.status(400).json({ error: "Quiz title is required." });
@@ -856,6 +1057,7 @@ async function run() {
                   type,
                   title,
                   questions,
+                  id,
                   createdAt: new Date(),
                 },
               },
@@ -887,8 +1089,15 @@ async function run() {
       "/course/:courseId/section/:sectionId/lesson/:lessonId/content",
       async (req, res) => {
         const { courseId, sectionId, lessonId } = req.params;
-        const { title, type, questions, description, content, existingFiles } =
-          req.body;
+        const {
+          title,
+          type,
+          questions,
+          description,
+          id,
+          content,
+          existingFiles,
+        } = req.body;
         let updateFields = {};
 
         if (!title) {
@@ -901,6 +1110,7 @@ async function run() {
         // Add fields based on content type
         if (description !== undefined) {
           contentObject.description = description;
+          contentObject.id = id;
         }
 
         if (content !== undefined) {
@@ -918,6 +1128,7 @@ async function run() {
               .json({ error: "At least one question is required." });
           }
           contentObject.questions = questions;
+          contentObject.id = id;
           contentObject.updatedAt = new Date();
         }
 
@@ -1033,6 +1244,108 @@ async function run() {
         res
           .status(500)
           .json({ error: "An error occurred while deleting the course" });
+      }
+    });
+
+    // Quiz submission endpoint
+    app.post("/quiz-submissions", async (req, res) => {
+      try {
+        const {
+          userId,
+          quizId,
+          score,
+          answers,
+          totalQuestions,
+          correctAnswers,
+        } = req.body;
+
+        // Validate required fields
+        if (!userId || !quizId || score === undefined || !answers) {
+          return res.status(400).json({
+            message:
+              "Missing required fields. Please provide userId, quizId, score, and answers",
+          });
+        }
+
+        // Validate score is a number between 0 and 100
+        if (typeof score !== "number" || score < 0 || score > 100) {
+          return res.status(400).json({
+            message: "Score must be a number between 0 and 100",
+          });
+        }
+
+        // Create submission document
+        const submission = {
+          userId,
+          quizId,
+          score,
+          answers,
+          totalQuestions,
+          correctAnswers,
+          submittedAt: new Date(),
+        };
+
+        const result = await quizSubmissionCollection.insertOne(submission);
+
+        if (result.insertedId) {
+          res.status(201).json({
+            message: "Quiz submitted successfully",
+            submissionId: result.insertedId,
+          });
+        } else {
+          res.status(500).json({ message: "Failed to submit quiz" });
+        }
+      } catch (error) {
+        console.error("Quiz submission error:", error);
+        res.status(500).json({ message: "Error submitting quiz" });
+      }
+    });
+
+    app.get("/quiz-submissions/:quizId/:userId", async (req, res) => {
+      try {
+        const { userId, quizId } = req.params;
+
+        const submission = await quizSubmissionCollection.findOne({
+          userId,
+          quizId,
+        });
+
+        if (!submission) {
+          return res.status(404).json({
+            message: "No submission found for this quiz",
+          });
+        }
+
+        res.json(submission);
+      } catch (error) {
+        console.error("Error retrieving quiz submission:", error);
+        res.status(500).json({
+          message: "Failed to retrieve quiz submission",
+        });
+      }
+    });
+
+    // Delete quiz submission endpoint
+    app.delete("/quiz-submissions/:quizId/:userId", async (req, res) => {
+      try {
+        const { quizId, userId } = req.params;
+
+        // Delete the submission
+        const result = await quizSubmissionCollection.deleteOne({
+          quizId,
+          userId,
+        });
+
+        if (result.deletedCount === 1) {
+          res
+            .status(200)
+            .json({ message: "Quiz submission deleted successfully" });
+        } else {
+          res.status(404).json({ message: "Quiz submission not found" });
+        }
+      } catch (error) {
+        console.error("Error deleting quiz submission:", error);
+        res.status(500).json({ message: "Failed to delete quiz submission" });
       }
     });
 
