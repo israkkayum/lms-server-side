@@ -37,11 +37,62 @@ async function run() {
     const assignmentSubmissionCollection = client
       .db("lms")
       .collection("assignmentSubmissions");
-
-    // Quiz submissions collection
     const quizSubmissionCollection = client
       .db("lms")
       .collection("quizSubmissions");
+    const forumTopicsCollection = client.db("lms").collection("forumTopics");
+    const forumRepliesCollection = client.db("lms").collection("forumReplies");
+
+    // Forum related APIs
+    app.get("/forum-topics", async (req, res) => {
+      try {
+        const topics = await forumTopicsCollection.find().toArray();
+        res.json(topics);
+      } catch (error) {
+        res.status(500).json({ error: "Failed to fetch forum topics" });
+      }
+    });
+
+    app.post("/forum-topics", async (req, res) => {
+      try {
+        const topic = req.body;
+        topic.createdAt = new Date();
+        topic.replies = 0;
+        topic.views = 0;
+        const result = await forumTopicsCollection.insertOne(topic);
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: "Failed to create forum topic" });
+      }
+    });
+
+    app.get("/forum-replies/:topicId", async (req, res) => {
+      try {
+        const topicId = req.params.topicId;
+        const replies = await forumRepliesCollection
+          .find({ topicId: new ObjectId(topicId) })
+          .toArray();
+        res.json(replies);
+      } catch (error) {
+        res.status(500).json({ error: "Failed to fetch replies" });
+      }
+    });
+
+    app.post("/forum-replies", async (req, res) => {
+      try {
+        const reply = req.body;
+        reply.createdAt = new Date();
+        reply.topicId = new ObjectId(reply.topicId);
+        const result = await forumRepliesCollection.insertOne(reply);
+        await forumTopicsCollection.updateOne(
+          { _id: reply.topicId },
+          { $inc: { replies: 1 } }
+        );
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: "Failed to create reply" });
+      }
+    });
 
     // jwt related api
     app.post("/jwt", async (req, res) => {
@@ -156,116 +207,6 @@ async function run() {
       const result = await userCollection.deleteOne(query);
       res.json(result);
     });
-
-    // Assignment submission endpoint
-    app.post("/assignments/submit", async (req, res) => {
-      try {
-        if (!req.files || !req.files.file) {
-          return res.status(400).json({ message: "No file uploaded" });
-        }
-
-        const { assignmentId, courseId, sectionId, lessonId, email } = req.body;
-        const file = req.files.file;
-        const studentEmail = email;
-
-        // Validate file size (10MB limit)
-        if (file.size > 10 * 1024 * 1024) {
-          return res
-            .status(400)
-            .json({ message: "File size must be less than 10MB" });
-        }
-
-        // Validate file type
-        const allowedTypes = [".pdf", ".doc", ".docx", ".zip"];
-        const fileExtension = file.name
-          .substring(file.name.lastIndexOf("."))
-          .toLowerCase();
-        if (!allowedTypes.includes(fileExtension)) {
-          return res.status(400).json({ message: "Invalid file type" });
-        }
-
-        // Convert file to base64
-        const fileData = file.data;
-        const encodedFile = fileData.toString("base64");
-        const fileBuffer = Buffer.from(encodedFile, "base64");
-
-        // Create submission document
-        const submission = {
-          assignmentId,
-          courseId,
-          sectionId,
-          lessonId,
-          studentEmail,
-          fileName: file.name,
-          fileType: fileExtension,
-          fileSize: file.size,
-          fileData: fileBuffer,
-          submittedAt: new Date(),
-        };
-
-        const result = await assignmentSubmissionCollection.insertOne(
-          submission
-        );
-
-        if (result.insertedId) {
-          res
-            .status(201)
-            .json({ message: "Assignment submitted successfully" });
-        } else {
-          res.status(500).json({ message: "Failed to submit assignment" });
-        }
-      } catch (error) {
-        console.error("Assignment submission error:", error);
-        res.status(500).json({ message: "Error submitting assignment" });
-      }
-    });
-
-    // Get assignment submissions for a specific assignment
-    app.get(
-      "/assignments/:assignmentId/submissions",
-      verifyToken,
-      async (req, res) => {
-        try {
-          const { assignmentId } = req.params;
-          const submissions = await assignmentSubmissionCollection
-            .find({ assignmentId })
-            .project({ fileData: 0 }) // Exclude file data from response
-            .toArray();
-
-          res.status(200).json(submissions);
-        } catch (error) {
-          console.error("Error fetching submissions:", error);
-          res.status(500).json({ message: "Error fetching submissions" });
-        }
-      }
-    );
-
-    // Get submission by assignment ID and user email
-    app.get(
-      "/assignments/:assignmentId/submission/:email",
-      async (req, res) => {
-        try {
-          const { assignmentId, email } = req.params;
-
-          const submission = await assignmentSubmissionCollection.findOne({
-            assignmentId,
-            studentEmail: email,
-          });
-
-          if (!submission) {
-            return res.status(404).json({ message: "No submission found" });
-          }
-
-          // Exclude the file data from the response for better performance
-          const { fileData, ...submissionWithoutFile } = submission;
-
-          res.status(200).json(submissionWithoutFile);
-        } catch (error) {
-          console.error("Error fetching submission:", error);
-          res.status(500).json({ message: "Error fetching submission" });
-        }
-      }
-    );
 
     // POST endpoint to create a new site
     app.post("/sites", async (req, res) => {
@@ -399,6 +340,107 @@ async function run() {
     });
 
     /////////////// CMS //////////////
+
+    // PATCH endpoint to update site homepage content
+    app.put("/sites/:id/announcements", verifyToken, async (req, res) => {
+      const { id } = req.params;
+      const { announcements } = req.body;
+
+      // Validate request body
+      if (!announcements || !Array.isArray(announcements)) {
+        return res.status(400).json({
+          message: "Invalid request body. 'announcements' must be an array",
+        });
+      }
+
+      // Validate each announcement object
+      for (const announcement of announcements) {
+        if (!announcement.title || !announcement.content) {
+          return res.status(400).json({
+            message: "Each announcement must have a title and content",
+          });
+        }
+      }
+
+      try {
+        const result = await siteCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { announcements } }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "Site not found" });
+        }
+
+        if (result.modifiedCount === 1) {
+          res.status(200).json({
+            message: "Announcements updated successfully",
+            count: announcements.length,
+          });
+        } else {
+          res.status(400).json({ message: "No changes were made" });
+        }
+      } catch (error) {
+        console.error("Error updating announcements:", error);
+        res.status(500).json({ message: "Failed to update announcements" });
+      }
+    });
+
+    // Delete a specific announcement
+    app.delete(
+      "/sites/:id/announcements/:index",
+      verifyToken,
+      async (req, res) => {
+        const { id, index } = req.params;
+
+        try {
+          // First, get the current site and its announcements
+          const site = await siteCollection.findOne({ _id: new ObjectId(id) });
+
+          if (!site) {
+            return res.status(404).json({ message: "Site not found" });
+          }
+
+          if (!site.announcements || !Array.isArray(site.announcements)) {
+            return res.status(400).json({ message: "No announcements found" });
+          }
+
+          const announcementIndex = parseInt(index);
+          if (
+            isNaN(announcementIndex) ||
+            announcementIndex < 0 ||
+            announcementIndex >= site.announcements.length
+          ) {
+            return res
+              .status(400)
+              .json({ message: "Invalid announcement index" });
+          }
+
+          // Remove the announcement at the specified index
+          const updatedAnnouncements = site.announcements.filter(
+            (_, i) => i !== announcementIndex
+          );
+
+          // Update the site with the new announcements array
+          const result = await siteCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { announcements: updatedAnnouncements } }
+          );
+
+          if (result.modifiedCount === 1) {
+            res.status(200).json({
+              message: "Announcement deleted successfully",
+              remainingCount: updatedAnnouncements.length,
+            });
+          } else {
+            res.status(400).json({ message: "Failed to delete announcement" });
+          }
+        } catch (error) {
+          console.error("Error deleting announcement:", error);
+          res.status(500).json({ message: "Failed to delete announcement" });
+        }
+      }
+    );
 
     app.get("/sites/:siteName/is-member", async (req, res) => {
       const { siteName } = req.params;
@@ -1247,10 +1289,156 @@ async function run() {
       }
     });
 
+    // Assignment submission endpoint
+    app.post("/assignments/submit", async (req, res) => {
+      try {
+        if (!req.files || !req.files.file) {
+          return res.status(400).json({ message: "No file uploaded" });
+        }
+
+        const { assignmentId, courseId, sectionId, lessonId, email } = req.body;
+        const file = req.files.file;
+        const studentEmail = email;
+
+        // Validate file size (10MB limit)
+        if (file.size > 10 * 1024 * 1024) {
+          return res
+            .status(400)
+            .json({ message: "File size must be less than 10MB" });
+        }
+
+        // Validate file type
+        const allowedTypes = [".pdf", ".doc", ".docx", ".zip"];
+        const fileExtension = file.name
+          .substring(file.name.lastIndexOf("."))
+          .toLowerCase();
+        if (!allowedTypes.includes(fileExtension)) {
+          return res.status(400).json({ message: "Invalid file type" });
+        }
+
+        // Convert file to base64
+        const fileData = file.data;
+        const encodedFile = fileData.toString("base64");
+        const fileBuffer = Buffer.from(encodedFile, "base64");
+
+        // Create submission document
+        const submission = {
+          assignmentId,
+          courseId,
+          sectionId,
+          lessonId,
+          studentEmail,
+          fileName: file.name,
+          fileType: fileExtension,
+          fileSize: file.size,
+          fileData: fileBuffer,
+          submittedAt: new Date(),
+        };
+
+        const result = await assignmentSubmissionCollection.insertOne(
+          submission
+        );
+
+        if (result.insertedId) {
+          res
+            .status(201)
+            .json({ message: "Assignment submitted successfully" });
+        } else {
+          res.status(500).json({ message: "Failed to submit assignment" });
+        }
+      } catch (error) {
+        console.error("Assignment submission error:", error);
+        res.status(500).json({ message: "Error submitting assignment" });
+      }
+    });
+
+    // Get assignment submissions for a specific assignment
+    app.get("/assignments/:assignmentId/submissions", async (req, res) => {
+      try {
+        const { assignmentId } = req.params;
+        const submissions = await assignmentSubmissionCollection
+          .find({ assignmentId })
+          .toArray();
+
+        res.status(200).json(submissions);
+      } catch (error) {
+        console.error("Error fetching submissions:", error);
+        res.status(500).json({ message: "Error fetching submissions" });
+      }
+    });
+
+    // Mark assignment submission
+    app.post(
+      "/assignments/:assignmentId/submissions/:submissionId/mark",
+      verifyToken,
+      async (req, res) => {
+        try {
+          const { assignmentId, submissionId } = req.params;
+          const { score, feedback } = req.body;
+
+          // Validate score
+          if (score < 0 || score > 100) {
+            return res
+              .status(400)
+              .json({ message: "Score must be between 0 and 100" });
+          }
+
+          // Update submission with score and feedback
+          const result = await assignmentSubmissionCollection.updateOne(
+            { _id: new ObjectId(submissionId), assignmentId },
+            { $set: { score, feedback, markedAt: new Date() } }
+          );
+
+          if (result.matchedCount === 0) {
+            return res.status(404).json({ message: "Submission not found" });
+          }
+
+          if (result.modifiedCount === 1) {
+            res.status(200).json({ message: "Assignment marked successfully" });
+          } else {
+            res.status(500).json({ message: "Failed to mark assignment" });
+          }
+        } catch (error) {
+          console.error("Error marking assignment:", error);
+          res.status(500).json({ message: "Error marking assignment" });
+        }
+      }
+    );
+
+    // Get submission by assignment ID and user email
+    app.get(
+      "/assignments/:assignmentId/submission/:email",
+      async (req, res) => {
+        try {
+          const { assignmentId, email } = req.params;
+
+          const submission = await assignmentSubmissionCollection.findOne({
+            assignmentId,
+            studentEmail: email,
+          });
+
+          if (!submission) {
+            return res.status(404).json({ message: "No submission found" });
+          }
+
+          // Exclude the file data from the response for better performance
+          const { fileData, ...submissionWithoutFile } = submission;
+
+          res.status(200).json(submissionWithoutFile);
+        } catch (error) {
+          console.error("Error fetching submission:", error);
+          res.status(500).json({ message: "Error fetching submission" });
+        }
+      }
+    );
+
     // Quiz submission endpoint
     app.post("/quiz-submissions", async (req, res) => {
       try {
         const {
+          courseId,
+          sectionId,
+          lessonId,
           userId,
           quizId,
           score,
@@ -1276,6 +1464,9 @@ async function run() {
 
         // Create submission document
         const submission = {
+          courseId,
+          sectionId,
+          lessonId,
           userId,
           quizId,
           score,
@@ -1346,6 +1537,85 @@ async function run() {
       } catch (error) {
         console.error("Error deleting quiz submission:", error);
         res.status(500).json({ message: "Failed to delete quiz submission" });
+      }
+    });
+
+    // Get grades for a course
+    app.get("/grades/:courseId", async (req, res) => {
+      try {
+        const { courseId } = req.params;
+        const { email } = req.query;
+
+        if (!email) {
+          return res.status(400).json({ message: "Email is required" });
+        }
+
+        // Get all assignments for this course
+        const assignments = await assignmentSubmissionCollection
+          .find({
+            courseId,
+            studentEmail: email,
+          })
+          .toArray();
+
+        // Get all quizzes for this course
+        const quizzes = await quizSubmissionCollection
+          .find({
+            courseId,
+            userId: email,
+          })
+          .toArray();
+
+        // Format assignment data
+        const formattedAssignments = assignments.map((assignment) => ({
+          title: "Assignment",
+          score: assignment.score || 0,
+          maxScore: 10,
+          submissionDate: assignment.submittedAt,
+          feedback: assignment.feedback || "",
+        }));
+
+        // Format quiz data
+        const formattedQuizzes = quizzes.map((quiz) => ({
+          title: "Quiz",
+          score: quiz.score || 0,
+          maxScore: 100,
+          submissionDate: quiz.submittedAt,
+          feedback: "",
+        }));
+
+        // Calculate overall grade
+        let overallGrade = "N/A";
+        const totalSubmissions =
+          formattedAssignments.length + formattedQuizzes.length;
+
+        if (totalSubmissions > 0) {
+          // Normalize assignment scores to 100-point scale
+          const normalizedAssignmentScores = formattedAssignments.map(
+            (a) => (a.score / a.maxScore) * 100
+          );
+
+          // Combine all scores
+          const allScores = [
+            ...normalizedAssignmentScores,
+            ...quizzes.map((q) => q.score),
+          ];
+
+          // Calculate average
+          const averageScore =
+            allScores.reduce((sum, score) => sum + score, 0) / allScores.length;
+
+          overallGrade = averageScore.toFixed(1) + "%";
+        }
+
+        res.json({
+          assignments: formattedAssignments,
+          quizzes: formattedQuizzes,
+          overallGrade,
+        });
+      } catch (error) {
+        console.error("Error fetching grades:", error);
+        res.status(500).json({ message: "Error fetching grades" });
       }
     });
 
