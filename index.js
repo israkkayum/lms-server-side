@@ -19,7 +19,7 @@ const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
-    strict: true,
+    strict: false, // Changed from true to false to allow commands not in API Version 1
     deprecationErrors: true,
   },
   socketTimeoutMS: 30000, // 30 seconds
@@ -42,57 +42,7 @@ async function run() {
       .collection("quizSubmissions");
     const forumTopicsCollection = client.db("lms").collection("forumTopics");
     const forumRepliesCollection = client.db("lms").collection("forumReplies");
-
-    // Forum related APIs
-    app.get("/forum-topics", async (req, res) => {
-      try {
-        const topics = await forumTopicsCollection.find().toArray();
-        res.json(topics);
-      } catch (error) {
-        res.status(500).json({ error: "Failed to fetch forum topics" });
-      }
-    });
-
-    app.post("/forum-topics", async (req, res) => {
-      try {
-        const topic = req.body;
-        topic.createdAt = new Date();
-        topic.replies = 0;
-        topic.views = 0;
-        const result = await forumTopicsCollection.insertOne(topic);
-        res.json(result);
-      } catch (error) {
-        res.status(500).json({ error: "Failed to create forum topic" });
-      }
-    });
-
-    app.get("/forum-replies/:topicId", async (req, res) => {
-      try {
-        const topicId = req.params.topicId;
-        const replies = await forumRepliesCollection
-          .find({ topicId: new ObjectId(topicId) })
-          .toArray();
-        res.json(replies);
-      } catch (error) {
-        res.status(500).json({ error: "Failed to fetch replies" });
-      }
-    });
-
-    app.post("/forum-replies", async (req, res) => {
-      try {
-        const reply = req.body;
-        reply.createdAt = new Date();
-        reply.topicId = new ObjectId(reply.topicId);
-        const result = await forumRepliesCollection.insertOne(reply);
-        await forumTopicsCollection.updateOne(
-          { _id: reply.topicId },
-          { $inc: { replies: 1 } }
-        );
-        res.json(result);
-      } catch (error) {
-        res.status(500).json({ error: "Failed to create reply" });
-      }
-    });
+    const blogCollection = client.db("lms").collection("blogs");
 
     // jwt related api
     app.post("/jwt", async (req, res) => {
@@ -1616,6 +1566,425 @@ async function run() {
       } catch (error) {
         console.error("Error fetching grades:", error);
         res.status(500).json({ message: "Error fetching grades" });
+      }
+    });
+
+    // Forum related APIs
+    app.get("/forum-topics", async (req, res) => {
+      try {
+        const topics = await forumTopicsCollection.find().toArray();
+        res.json(topics);
+      } catch (error) {
+        res.status(500).json({ error: "Failed to fetch forum topics" });
+      }
+    });
+
+    app.post("/forum-topics", async (req, res) => {
+      try {
+        const topic = req.body;
+        topic.createdAt = new Date();
+        topic.replies = 0;
+        topic.views = 0;
+        const result = await forumTopicsCollection.insertOne(topic);
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: "Failed to create forum topic" });
+      }
+    });
+
+    app.get("/forum-topics/:topicId", async (req, res) => {
+      try {
+        const topicId = req.params.topicId;
+        const topic = await forumTopicsCollection.findOne({
+          _id: new ObjectId(topicId),
+        });
+
+        if (!topic) {
+          return res.status(404).json({ error: "Topic not found" });
+        }
+
+        // Increment views count
+        await forumTopicsCollection.updateOne(
+          { _id: new ObjectId(topicId) },
+          { $inc: { views: 1 } }
+        );
+
+        // Return the updated topic
+        const updatedTopic = await forumTopicsCollection.findOne({
+          _id: new ObjectId(topicId),
+        });
+        res.json(updatedTopic);
+      } catch (error) {
+        console.error("Error fetching topic:", error);
+        res.status(500).json({ error: "Failed to fetch forum topic" });
+      }
+    });
+
+    app.get("/forum-replies/:topicId", async (req, res) => {
+      try {
+        const topicId = req.params.topicId;
+        const replies = await forumRepliesCollection
+          .find({ topicId: new ObjectId(topicId) })
+          .toArray();
+        res.json(replies);
+      } catch (error) {
+        res.status(500).json({ error: "Failed to fetch replies" });
+      }
+    });
+
+    app.post("/forum-replies", async (req, res) => {
+      try {
+        const reply = req.body;
+        reply.createdAt = new Date();
+        reply.topicId = new ObjectId(reply.topicId);
+        const result = await forumRepliesCollection.insertOne(reply);
+        await forumTopicsCollection.updateOne(
+          { _id: reply.topicId },
+          { $inc: { replies: 1 } }
+        );
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: "Failed to create reply" });
+      }
+    });
+
+    // Delete a forum topic
+    app.delete("/forum-topics/:id", verifyToken, async (req, res) => {
+      try {
+        const topicId = req.params.id;
+        const topic = await forumTopicsCollection.findOne({
+          _id: new ObjectId(topicId),
+        });
+
+        if (!topic) {
+          return res.status(404).json({ error: "Topic not found" });
+        }
+
+        // Check if the user is the author of the topic
+        if (topic.author !== req.decoded.email) {
+          return res
+            .status(403)
+            .json({ error: "You are not authorized to delete this topic" });
+        }
+
+        // Delete all replies associated with this topic
+        await forumRepliesCollection.deleteMany({
+          topicId: new ObjectId(topicId),
+        });
+
+        // Delete the topic
+        const result = await forumTopicsCollection.deleteOne({
+          _id: new ObjectId(topicId),
+        });
+
+        res.json(result);
+      } catch (error) {
+        console.error("Error deleting topic:", error);
+        res.status(500).json({ error: "Failed to delete topic" });
+      }
+    });
+    // Delete a forum reply
+    app.delete("/forum-replies/:id", verifyToken, async (req, res) => {
+      try {
+        const replyId = req.params.id;
+        const reply = await forumRepliesCollection.findOne({
+          _id: new ObjectId(replyId),
+        });
+
+        if (!reply) {
+          return res.status(404).json({ error: "Reply not found" });
+        }
+
+        // Check if the user is the author of the reply
+        if (reply.author !== req.decoded.email) {
+          return res
+            .status(403)
+            .json({ error: "You are not authorized to delete this reply" });
+        }
+
+        // Decrement the reply count in the topic
+        await forumTopicsCollection.updateOne(
+          { _id: reply.topicId },
+          { $inc: { replies: -1 } }
+        );
+
+        // Delete the reply
+        const result = await forumRepliesCollection.deleteOne({
+          _id: new ObjectId(replyId),
+        });
+
+        res.json(result);
+      } catch (error) {
+        console.error("Error deleting reply:", error);
+        res.status(500).json({ error: "Failed to delete reply" });
+      }
+    });
+
+    // Blog related APIs
+    // Get all blogs with optional filtering
+    app.get("/blogs", async (req, res) => {
+      try {
+        const { category, search, page = 1, limit = 6 } = req.query;
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+
+        // Build query based on filters
+        let query = {};
+        if (category) query.category = category;
+        if (search) {
+          query = {
+            ...query,
+            $or: [
+              { title: { $regex: search, $options: "i" } },
+              { content: { $regex: search, $options: "i" } },
+            ],
+          };
+        }
+
+        // Get total count for pagination
+        const total = await blogCollection.countDocuments(query);
+
+        // Get blogs with pagination
+        const blogs = await blogCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(parseInt(limit))
+          .toArray();
+
+        // Get unique categories for filtering
+        const categories = await blogCollection.distinct("category");
+
+        res.json({
+          blogs,
+          pagination: {
+            total,
+            totalPages: Math.ceil(total / parseInt(limit)),
+            currentPage: parseInt(page),
+            limit: parseInt(limit),
+          },
+          categories,
+        });
+      } catch (error) {
+        console.error("Error fetching blogs:", error);
+        res.status(500).json({ message: "Failed to fetch blogs" });
+      }
+    });
+
+    // Get a single blog by ID
+    app.get("/blogs/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const blog = await blogCollection.findOne({ _id: new ObjectId(id) });
+
+        if (!blog) {
+          return res.status(404).json({ message: "Blog not found" });
+        }
+
+        // Increment view count
+        await blogCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $inc: { views: 1 } }
+        );
+
+        // Get related blogs (same category)
+        const relatedBlogs = await blogCollection
+          .find({
+            category: blog.category,
+            _id: { $ne: new ObjectId(id) },
+          })
+          .limit(3)
+          .toArray();
+
+        res.json({ blog, relatedBlogs });
+      } catch (error) {
+        console.error("Error fetching blog:", error);
+        res.status(500).json({ message: "Failed to fetch blog" });
+      }
+    });
+
+    // Create a new blog (requires authentication)
+    app.post("/blogs", verifyToken, async (req, res) => {
+      try {
+        const { title, content, category, excerpt } = req.body;
+
+        // Validate required fields
+        if (!title || !content || !category) {
+          return res
+            .status(400)
+            .json({ message: "Title, content, and category are required" });
+        }
+
+        // Handle image upload and convert to base64
+        let imageBuffer = null;
+        if (req.files && req.files.image) {
+          const image = req.files.image;
+          const imageData = image.data;
+          const encodedImage = imageData.toString("base64");
+          imageBuffer = Buffer.from(encodedImage, "base64");
+        }
+
+        const newBlog = {
+          title,
+          content,
+          category,
+          image: imageBuffer,
+          excerpt: excerpt || content.substring(0, 150) + "...",
+          author: req.decoded.email,
+          authorName: req.decoded.name || req.decoded.email.split("@")[0],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          views: 0,
+          likes: 0,
+        };
+
+        const result = await blogCollection.insertOne(newBlog);
+        res.status(201).json({
+          success: true,
+          insertedId: result.insertedId,
+          blog: newBlog,
+        });
+      } catch (error) {
+        console.error("Error creating blog:", error);
+        res.status(500).json({ message: "Failed to create blog" });
+      }
+    });
+
+    // Update a blog (requires authentication and ownership)
+    app.patch("/blogs/:id", verifyToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { title, content, category, excerpt } = req.body;
+
+        // Find the blog
+        const blog = await blogCollection.findOne({ _id: new ObjectId(id) });
+
+        if (!blog) {
+          return res.status(404).json({ message: "Blog not found" });
+        }
+
+        // Check if user is the author
+        if (blog.author !== req.decoded.email) {
+          return res
+            .status(403)
+            .json({ message: "You are not authorized to update this blog" });
+        }
+
+        // Handle image upload and convert to base64
+        let imageUpdate = {};
+        if (req.files && req.files.image) {
+          const image = req.files.image;
+          const imageData = image.data;
+          const encodedImage = imageData.toString("base64");
+          const imageBuffer = Buffer.from(encodedImage, "base64");
+          imageUpdate = { image: imageBuffer };
+        }
+
+        // Update the blog
+        const updatedBlog = {
+          $set: {
+            title: title || blog.title,
+            content: content || blog.content,
+            category: category || blog.category,
+            excerpt:
+              excerpt ||
+              (content ? content.substring(0, 150) + "..." : blog.excerpt),
+            updatedAt: new Date(),
+            ...imageUpdate,
+          },
+        };
+
+        const result = await blogCollection.updateOne(
+          { _id: new ObjectId(id) },
+          updatedBlog
+        );
+
+        res.json({
+          success: true,
+          modifiedCount: result.modifiedCount,
+        });
+      } catch (error) {
+        console.error("Error updating blog:", error);
+        res.status(500).json({ message: "Failed to update blog" });
+      }
+    });
+
+    // Delete a blog (requires authentication and ownership)
+    app.delete("/blogs/:id", verifyToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        // Find the blog
+        const blog = await blogCollection.findOne({ _id: new ObjectId(id) });
+
+        if (!blog) {
+          return res.status(404).json({ message: "Blog not found" });
+        }
+
+        // Check if user is the author
+        if (blog.author !== req.decoded.email) {
+          return res
+            .status(403)
+            .json({ message: "You are not authorized to delete this blog" });
+        }
+
+        // Delete the blog
+        const result = await blogCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        res.json({
+          success: true,
+          deletedCount: result.deletedCount,
+        });
+      } catch (error) {
+        console.error("Error deleting blog:", error);
+        res.status(500).json({ message: "Failed to delete blog" });
+      }
+    });
+
+    // Like a blog
+    app.post("/blogs/:id/like", verifyToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        // Check if blog exists
+        const blog = await blogCollection.findOne({ _id: new ObjectId(id) });
+        if (!blog) {
+          return res.status(404).json({ message: "Blog not found" });
+        }
+
+        // Check if user already liked the blog
+        const userEmail = req.decoded.email;
+        const alreadyLiked = blog.likedBy && blog.likedBy.includes(userEmail);
+
+        let updateOperation;
+        if (alreadyLiked) {
+          // Unlike: Remove user from likedBy array and decrement likes count
+          updateOperation = {
+            $pull: { likedBy: userEmail },
+            $inc: { likes: -1 },
+          };
+        } else {
+          // Like: Add user to likedBy array and increment likes count
+          updateOperation = {
+            $addToSet: { likedBy: userEmail },
+            $inc: { likes: 1 },
+          };
+        }
+
+        const result = await blogCollection.updateOne(
+          { _id: new ObjectId(id) },
+          updateOperation
+        );
+
+        res.json({
+          success: true,
+          liked: !alreadyLiked,
+          modifiedCount: result.modifiedCount,
+        });
+      } catch (error) {
+        console.error("Error liking/unliking blog:", error);
+        res.status(500).json({ message: "Failed to process like/unlike" });
       }
     });
 
